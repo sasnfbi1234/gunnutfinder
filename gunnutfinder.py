@@ -21,13 +21,13 @@
 #
 
 
+import privatesettings
 import praw
-import sqlite3
-import sys
-from privatesettings import password, path
-from subreddits import gunnutSubreddits
-import time
 import re
+import sqlite3
+import subreddits
+import sys
+import time
 
 
 class SubredditData:
@@ -106,13 +106,13 @@ def calculate_gunnuttiness(user):
     
     for submission in submissions:
         subreddit = submission.subreddit.display_name.lower()
-        if subreddit in [x.lower() for x in gunnutSubreddits]:
+        if subreddit in [x.lower() for x in subreddits.gunnutSubreddits]:
             nodata = False
             subredditdata_list = update_subreddit_data(subredditdata_list, subreddit, submission, False)
     
     for comment in comments:
         subreddit = comment.subreddit.display_name.lower()
-        if subreddit in [x.lower() for x in gunnutSubreddits]:
+        if subreddit in [x.lower() for x in subreddits.gunnutSubreddits]:
             nodata = False
             subredditdata_list = update_subreddit_data(subredditdata_list, subreddit, comment, True)
     
@@ -139,13 +139,17 @@ def calculate_gunnuttiness(user):
         replytext += '.\n\n'
         score += subredditData.totalSubmissionKarma + subredditData.totalCommentKarma
     
-    replytext += '---\n\n###Total score: ' + str(score) + '\n\n###Chance of being a gunnut: '
-    if score > 0:
-        replytext += str((score + 1) ** 3) + '%.'
-    else:
-        replytext += '0%.'
-    replytext += '\n\n---\n\nI am a bot. Only the past 1,000 posts and comments are fetched. If I am misbehaving send' \
-                 'my [Creator](https://np.reddit.com/message/compose/?to=sasnfbi1234) a message.'
+    replytext += '---\n\n###Total score: ' + str(score)
+    if privatesettings.flavor:
+        replytext += '\n\n###Chance of being a gunnut: '
+        if score > 0:
+            replytext += str((score + 1) ** 3) + privatesettings.flavor_suffix
+        else:
+            replytext += '0' + privatesettings.flavor_suffix
+    replytext += '\n\n---\n\nI am a bot. Only the past 1,000 posts and comments are fetched.'
+    if privatesettings.operator:
+        replytext += ' If I am misbehaving send my [operator](https://np.reddit.com/message/compose/?to={0}) ' \
+                     'a message.'.format(privatesettings.operator)
     return replytext
 
 
@@ -155,7 +159,7 @@ def handle_request(request):
         user = extract_username(request.body)
         if user is not None:
             try:
-                if user == 'gunnutfinder':  # For smartasses.
+                if user == privatesettings.username:  # For smartasses.
                     request.reply('Nice try.')
                     sqlCursor.execute('INSERT INTO Identifiers VALUES (?)', (request.id,))
                     print(time.ctime() + ': Received request to check self.')
@@ -172,8 +176,8 @@ def handle_request(request):
 
 
 def main():
-    r.login('gunnutfinder', password)
-    print(time.ctime() + ': Logged in as /u/gunnutfinder', file=sys.stdout)
+    r.login(privatesettings.username, privatesettings.password)
+    print(time.ctime() + ': Logged in as /u/{0}'.format(privatesettings.username), file=sys.stdout)
     while True:
         try:
             for mention in r.get_mentions():
@@ -184,20 +188,17 @@ def main():
             print(e, file=sys.stderr)
         time.sleep(120)
 
+username_regex = re.compile(r'^(/u/{0})?\s*(?:/?u/)?(?P<username>\w+)\s*$'.format(privatesettings.username),
+                            re.IGNORECASE | re.MULTILINE)
 
-username_regex = re.compile(
-    r'^(/u/gunnutfinder)?\s*(?:/?u/)?(?P<username>\w+)\s*$',
-    re.IGNORECASE | re.MULTILINE
-)
-
-sqlConnection = sqlite3.connect(path + 'database.db')
+sqlConnection = sqlite3.connect(privatesettings.path + 'database.db')
 sqlCursor = sqlConnection.cursor()
 sqlCursor.execute('CREATE TABLE IF NOT EXISTS Identifiers (id text)')
 
-r = praw.Reddit(user_agent='A program that checks if a user is a gun nut.')
+r = praw.Reddit(user_agent=privatesettings.user_agent)
 
-sys.stdout = open(path + 'log.txt', 'a')
-sys.stderr = open(path + 'error.txt', 'a')
+sys.stdout = open(privatesettings.path + 'log.txt', 'a')
+sys.stderr = open(privatesettings.path + 'error.txt', 'a')
 
 if __name__ == '__main__':
     main()
