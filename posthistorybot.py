@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 #
-#  gunnutfinder.py
+#  posthistorybot.py
 #
 #  Derived from https://github.com/Wyboth/isReactionaryBot, which is
 #  Copyright 2015 Wyboth <www.reddit.com/u/Wyboth>
@@ -106,13 +106,13 @@ def calculate_gunnuttiness(user):
     
     for submission in submissions:
         subreddit = submission.subreddit.display_name.lower()
-        if subreddit in [x.lower() for x in subreddits.gunnutSubreddits]:
+        if subreddit in [x.lower() for x in subreddits.tracked_subreddits]:
             nodata = False
             subredditdata_list = update_subreddit_data(subredditdata_list, subreddit, submission, False)
     
     for comment in comments:
         subreddit = comment.subreddit.display_name.lower()
-        if subreddit in [x.lower() for x in subreddits.gunnutSubreddits]:
+        if subreddit in [x.lower() for x in subreddits.tracked_subreddits]:
             nodata = False
             subredditdata_list = update_subreddit_data(subredditdata_list, subreddit, comment, True)
     
