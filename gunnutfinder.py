@@ -175,6 +175,8 @@ def main():
     r.login('gunnutfinder', password)
     print(time.ctime() + ': Logged in as /u/gunnutfinder', file=sys.stdout)
     while True:
+        sys.stdout = open(path + 'log.txt', 'a')
+        sys.stderr = open(path + 'error.txt', 'a')
         try:
             for mention in r.get_mentions():
                 handle_request(mention)
@@ -182,6 +184,8 @@ def main():
                 handle_request(message)
         except Exception as e:
             print(e, file=sys.stderr)
+        sys.stdout.close()
+        sys.stderr.close()
         time.sleep(120)
 
 
@@ -195,9 +199,6 @@ sqlCursor = sqlConnection.cursor()
 sqlCursor.execute('CREATE TABLE IF NOT EXISTS Identifiers (id text)')
 
 r = praw.Reddit(user_agent='A program that checks if a user is a gun nut.')
-
-sys.stdout = open(path + 'log.txt', 'a')
-sys.stderr = open(path + 'error.txt', 'a')
 
 if __name__ == '__main__':
     main()
