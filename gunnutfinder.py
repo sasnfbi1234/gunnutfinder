@@ -21,13 +21,15 @@
 #
 
 
+from privatesettings import password, path, refresh_token
+from subreddits import gunnutSubreddits
+from logging.handlers import TimedRotatingFileHandler
+import logging
 import praw
+import re
 import sqlite3
 import sys
-from privatesettings import password, path
-from subreddits import gunnutSubreddits
 import time
-import re
 
 
 class SubredditData:
@@ -39,6 +41,10 @@ class SubredditData:
     totalCommentKarma = 0
     submissionPermalinks = None  # List cannot be initialized here!
     commentPermalinks = None  # List cannot be initialized here!
+
+    def __init__(self, name, sub_count):
+        self.subredditName = name
+        self.submissionCount = sub_count
 
 
 def extract_username(text):
@@ -59,86 +65,99 @@ def has_processed(post):
     return True
 
 
-def update_subreddit_data(subredditdata, subreddit, item, is_comment):
-    """This takes the submission or comment, and updates its corresponding subredditData class with all of its
-    attributes."""
-    subreddit_in_list = False
-    for i in range(len(subredditdata)):
-        if subredditdata[i].subredditName.lower() == subreddit:
-            subreddit_in_list = True
-            if is_comment:
-                subredditdata[i].commentCount += 1
-                subredditdata[i].totalCommentKarma += int(item.score)
-                if len(subredditdata[i].commentPermalinks) < 8:
-                    subredditdata[i].commentPermalinks.append(item.permalink + '?context=10')
-            else:
-                subredditdata[i].submissionCount += 1
-                subredditdata[i].totalSubmissionKarma += int(item.score)
-                if len(subredditdata[i].submissionPermalinks) < 8:
-                    subredditdata[i].submissionPermalinks.append(item.permalink)
-            break
-    if not subreddit_in_list:
-        newdata = SubredditData()
-        newdata.subredditName = item.subreddit.display_name
-        if is_comment:
-            newdata.commentCount = 1
-            newdata.totalCommentKarma = int(item.score)
-            newdata.commentPermalinks = [item.permalink + '?context=10']
-            newdata.submissionPermalinks = []
+def create_subreddit_summary(subdata):
+    """This function creates a SubredditData instance for each gun nut subreddit found in the user's history."""
+    datalist = {}
+    for subreddit in subdata:
+        subdata_instance = SubredditData(subreddit, len(subdata[subreddit]))
+        eight_submissions = []
+        for submission in subdata[subreddit]:
+            subdata_instance.totalSubmissionKarma += submission[1]
+            if len(eight_submissions) < 8:
+                eight_submissions.append(submission[0])
+        subdata_instance.submissionPermalinks = []
+        for submission in eight_submissions:
+            subdata_instance.submissionPermalinks.append(r.get_info(thing_id=submission).permalink)
+        datalist[subreddit] = subdata_instance
+    return datalist
+
+
+def add_comment_data(subreddit_summary, commentdata):
+    """This function adds the comments from each gun nut subreddit to the list thus far compiled."""
+    datalist = {}
+    for subreddit in commentdata:
+        if subreddit in subreddit_summary:
+            subdata_instance = subreddit_summary[subreddit]
         else:
-            newdata.submissionCount = 1
-            newdata.totalSubmissionKarma = int(item.score)
-            newdata.submissionPermalinks = [item.permalink]
-            newdata.commentPermalinks = []
-        subredditdata.append(newdata)
-    return subredditdata
+            subdata_instance = SubredditData(subreddit, 0)
+        eight_comments = []
+        for comment in commentdata[subreddit]:
+            subdata_instance.commentCount += 1
+            subdata_instance.totalCommentKarma += comment[1]
+            if len(eight_comments) < 8:
+                eight_comments.append(comment[0])
+        subdata_instance.commentPermalinks = []
+        for comment in eight_comments:
+            subdata_instance.commentPermalinks.append(r.get_info(thing_id=comment).permalink)
+        datalist[subreddit] = subdata_instance
+    return datalist
 
 
 def calculate_gunnuttiness(user):
-    """Figures out how much of a gunnut the user is, and returns the reply text."""
-    nodata = True
-    subredditdata_list = []
-    
+    """Figures out how much of a gun nut the user is, and returns the reply text."""
+    subreddit_summary = {}
+
     praw_user = r.get_redditor(user)
     username = praw_user.name
     submissions = praw_user.get_submitted(limit=1000)
     comments = praw_user.get_comments(limit=1000)
-    
+
+    subdata = {}
     for submission in submissions:
         subreddit = submission.subreddit.display_name.lower()
-        if subreddit in [x.lower() for x in gunnutSubreddits]:
-            nodata = False
-            subredditdata_list = update_subreddit_data(subredditdata_list, subreddit, submission, False)
-    
+        if subreddit in gunnutSubreddits:
+            if subreddit in subdata:
+                subdata[subreddit].append((submission.fullname, int(submission.score)))
+            else:
+                subdata[subreddit] = [(submission.fullname, int(submission.score))]
+    if subdata:
+        subreddit_summary.update(create_subreddit_summary(subdata))
+
+    commentdata = {}
     for comment in comments:
         subreddit = comment.subreddit.display_name.lower()
-        if subreddit in [x.lower() for x in gunnutSubreddits]:
-            nodata = False
-            subredditdata_list = update_subreddit_data(subredditdata_list, subreddit, comment, True)
-    
-    if nodata:
+        if subreddit in gunnutSubreddits:
+            if subreddit in commentdata:
+                commentdata[subreddit].append((comment.fullname, int(comment.score)))
+            else:
+                commentdata[subreddit] = [(comment.fullname, int(comment.score))]
+    if commentdata:
+        subreddit_summary.update(add_comment_data(subreddit_summary, commentdata))
+
+    if not subreddit_summary:
         return 'Nothing found for ' + username + '.'
-    
+
     score = 0
     replytext = username + ' post history contains participation in the following subreddits:\n\n'
-    for subredditData in subredditdata_list:
-        replytext += '[/r/' + subredditData.subredditName + '](' + 'http://np.reddit.com/r/' +\
-                     subredditData.subredditName + '): '
-        if len(subredditData.submissionPermalinks) > 0:
-            replytext += str(subredditData.submissionCount) + ' posts ('
-            for i in range(len(subredditData.submissionPermalinks)):
-                replytext += '[' + str(i+1) + '](' + subredditData.submissionPermalinks[i].replace('www.', 'np.') + '), '
-            replytext = replytext[:-2] + '), **combined score: ' + str(subredditData.totalSubmissionKarma) + '**'
-            if len(subredditData.commentPermalinks) > 0:
+    for subreddit in subreddit_summary:
+        replytext += '/r/' + subreddit_summary[subreddit].subredditName + ': '
+        if subreddit_summary[subreddit].submissionPermalinks:
+            replytext += str(subreddit_summary[subreddit].submissionCount) + ' posts ('
+            for i in range(len(subreddit_summary[subreddit].submissionPermalinks)):
+                replytext += '[' + str(i + 1) + '](' + subreddit_summary[subreddit].submissionPermalinks[i] + '), '
+            replytext = replytext[:-2] + '), **combined score: ' + str(subreddit_summary[subreddit].totalSubmissionKarma) + '**'
+            if subreddit_summary[subreddit].commentPermalinks:
                 replytext += '; '
-        if len(subredditData.commentPermalinks) > 0:
-            replytext += str(subredditData.commentCount) + ' comments ('
-            for i in range(len(subredditData.commentPermalinks)):
-                replytext += '[' + str(i+1) + '](' + subredditData.commentPermalinks[i].replace('www.', 'np.') + '), '
-            replytext = replytext[:-2] + '), **combined score: ' + str(subredditData.totalCommentKarma) + '**'
+        if subreddit_summary[subreddit].commentPermalinks:
+            replytext += str(subreddit_summary[subreddit].commentCount) + ' comments ('
+            for i in range(len(subreddit_summary[subreddit].commentPermalinks)):
+                replytext += '[' + str(i + 1) + '](' + subreddit_summary[subreddit].commentPermalinks[i] + '), '
+            replytext = replytext[:-2] + '), **combined score: ' + str(subreddit_summary[subreddit].totalCommentKarma) + '**'
         replytext += '.\n\n'
-        score += subredditData.totalSubmissionKarma + subredditData.totalCommentKarma
-    
+        score += subreddit_summary[subreddit].totalSubmissionKarma + subreddit_summary[subreddit].totalCommentKarma
+        if len(replytext) >= 9500:
+            break
+
     replytext += '---\n\n###Total score: ' + str(score) + '\n\n###Chance of being a gunnut: '
     if score > 0:
         replytext += str((score + 1) ** 3) + '%.'
@@ -158,47 +177,53 @@ def handle_request(request):
                 if user == 'gunnutfinder':  # For smartasses.
                     request.reply('Nice try.')
                     sqlCursor.execute('INSERT INTO Identifiers VALUES (?)', (request.id,))
-                    print(time.ctime() + ': Received request to check self.')
+                    logger.info('Received request to check self.')
                 else:
                     request.reply(calculate_gunnuttiness(user))
                     sqlCursor.execute('INSERT INTO Identifiers VALUES (?)', (request.id,))
-                    print(time.ctime() + ': Received and successfully processed request to check user {0}'.format(user))
+                    logger.info('Received and successfully processed request to check user {0}'.format(user))
             except praw.errors.NotFound:
                 request.reply('User {0} not found.'.format(user))
                 sqlCursor.execute('INSERT INTO Identifiers VALUES (?)', (request.id,))
-                print(time.ctime() + ': Received request to check user {0}. Failed to find user.'.format(user),
-                      file=sys.stderr)
+                logger.info('Received request to check user {0}. Failed to find user.'.format(user))
+            except praw.errors.Forbidden:
+                sqlCursor.execute('INSERT INTO Identifiers VALUES (?)', (request.id,))
+                logger.info('Received request to check user {0}. Received 403 (probably banned).'.format(user))
             sqlConnection.commit()
 
 
 def main():
-    r.login('gunnutfinder', password)
-    print(time.ctime() + ': Logged in as /u/gunnutfinder', file=sys.stdout)
+    r.refresh_access_information(refresh_token)
     while True:
-        sys.stdout = open(path + 'log.txt', 'a')
-        sys.stderr = open(path + 'error.txt', 'a')
         try:
             for mention in r.get_mentions():
                 handle_request(mention)
             for message in r.get_messages():
                 handle_request(message)
-        except Exception as e:
-            print(e, file=sys.stderr)
-        sys.stdout.close()
-        sys.stderr.close()
+        except praw.errors.HTTPException:
+            pass
+        except Exception:
+            logger.exception('Error: ')
+            continue
         time.sleep(120)
 
 
-username_regex = re.compile(
-    r'^(/u/gunnutfinder)?\s*(?:/?u/)?(?P<username>\w+)\s*$',
-    re.IGNORECASE | re.MULTILINE
-)
+logging.basicConfig(level=logging.DEBUG)
+logger = logging.getLogger('gnutlogger')
+loghandler = TimedRotatingFileHandler(path + 'log.txt', when='d', backupCount=3)
+loghandler.setLevel(logging.INFO)
+logformat = logging.Formatter(fmt='%(asctime)s: %(levelname)s: %(message)s',
+                              datefmt='%m/%d/%Y %I:%M:%S %p')
+loghandler.setFormatter(logformat)
+logger.addHandler(loghandler)
+
+username_regex = re.compile(r'^(/u/gunnutfinder)?\s*(?:/?u/)?(?P<username>\w+)\s*$', re.IGNORECASE | re.MULTILINE)
 
 sqlConnection = sqlite3.connect(path + 'database.db')
 sqlCursor = sqlConnection.cursor()
 sqlCursor.execute('CREATE TABLE IF NOT EXISTS Identifiers (id text)')
 
-r = praw.Reddit(user_agent='A program that checks if a user is a gun nut.')
+r = praw.Reddit(user_agent='A program that checks if a user is a gun nut.', site_name='gnutfinder')
 
 if __name__ == '__main__':
     main()
