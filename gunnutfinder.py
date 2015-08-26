@@ -223,7 +223,7 @@ sqlConnection = sqlite3.connect(path + 'database.db')
 sqlCursor = sqlConnection.cursor()
 sqlCursor.execute('CREATE TABLE IF NOT EXISTS Identifiers (id text)')
 
-r = praw.Reddit(user_agent='A program that checks if a user is a gun nut.')
+r = praw.Reddit(user_agent='A program that checks if a user is a gun nut.', site_name='gnutfinder')
 
 if __name__ == '__main__':
     main()
